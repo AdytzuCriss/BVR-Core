@@ -72,6 +72,7 @@ public class BVRCore implements ModInitializer {
 	}
 
 	private int tickCounter = 0;
+	private int importTimer = 0;
 	private boolean warnedMissingObjective = false;
 
 	@Override
@@ -112,6 +113,11 @@ public class BVRCore implements ModInitializer {
 		setScore(server, source, "#mod", now.getHour() * 60 + now.getMinute());
 		setScore(server, source, "#clock", 1);
 		updateCounters(server);
+		importTimer++;
+		if (importTimer >= 10) {
+			importTimer = 0;
+			importStats(server); // la ~10 s: importa istoricul din world/stats pentru jucatorii care nu l-au primit
+		}
 	}
 
 	private static void setScore(MinecraftServer server, CommandSourceStack source, String holder, int value) {
@@ -927,5 +933,99 @@ public class BVRCore implements ModInitializer {
 		run(server, "data modify storage reborn:o q set value {n:\"" + name + "\"}");
 		run(server, "execute as " + p.getStringUUID() + " run function reborn:info_open with storage reborn:o q");
 		return 1;
+	}
+
+	// ------------------------------------------------------------------ import din world/stats (o singura data pe jucator)
+
+	private static long stat(String json, String section, String key) {
+		int start = json.indexOf("\"minecraft:" + section + "\"");
+		if (start < 0) {
+			return 0;
+		}
+		int open = json.indexOf('{', start);
+		if (open < 0) {
+			return 0;
+		}
+		int depth = 0;
+		int end = -1;
+		for (int i = open; i < json.length(); i++) {
+			char ch = json.charAt(i);
+			if (ch == '{') {
+				depth++;
+			} else if (ch == '}') {
+				depth--;
+				if (depth == 0) {
+					end = i;
+					break;
+				}
+			}
+		}
+		if (end < 0) {
+			return 0;
+		}
+		Matcher m = Pattern.compile("\"minecraft:" + Pattern.quote(key) + "\"\\s*:\\s*(\\d+)").matcher(json.substring(open, end + 1));
+		return m.find() ? Long.parseLong(m.group(1)) : 0;
+	}
+
+	private static long statSum(String json, String section, String... keys) {
+		long total = 0;
+		for (String key : keys) {
+			total += stat(json, section, key);
+		}
+		return total;
+	}
+
+	private static void importStats(MinecraftServer server) {
+		Objective flag = server.getScoreboard().getObjective("rb_impd");
+		if (flag == null) {
+			return; // datapack-ul cu milestones nu e incarcat
+		}
+		int done = 0;
+		for (ServerPlayer p : new ArrayList<>(server.getPlayerList().getPlayers())) {
+			ReadOnlyScoreInfo info = server.getScoreboard().getPlayerScoreInfo(p, flag);
+			if (info != null && info.value() >= 1) {
+				continue;
+			}
+			if (done >= 8) {
+				break;
+			}
+			done++;
+			importPlayerStats(server, p);
+		}
+	}
+
+	private static void importPlayerStats(MinecraftServer server, ServerPlayer p) {
+		String name = p.getScoreboardName();
+		String json = "";
+		Path file = Path.of("world", "stats", p.getStringUUID() + ".json");
+		try {
+			if (Files.exists(file)) {
+				json = Files.readString(file, StandardCharsets.UTF_8);
+			}
+		} catch (IOException e) {
+			LOGGER.warn("Nu pot citi {}: {}", file, e.toString());
+		}
+		long[] v = new long[15];
+		v[1] = stat(json, "custom", "fish_caught");
+		v[2] = stat(json, "custom", "walk_one_cm") / 100;
+		v[3] = stat(json, "custom", "mob_kills");
+		v[4] = statSum(json, "mined", "cobblestone", "stone", "deepslate", "dirt", "sand", "gravel", "netherrack");
+		v[5] = statSum(json, "mined", "oak_log", "spruce_log", "birch_log", "jungle_log", "acacia_log", "dark_oak_log", "mangrove_log", "cherry_log");
+		v[6] = stat(json, "custom", "traded_with_villager");
+		v[7] = stat(json, "custom", "animals_bred");
+		v[8] = statSum(json, "mined", "wheat", "carrots", "potatoes", "beetroots", "melon", "pumpkin");
+		v[9] = stat(json, "custom", "aviate_one_cm") / 100;
+		v[10] = stat(json, "custom", "enchant_item");
+		v[11] = stat(json, "killed", "ender_dragon");
+		v[12] = stat(json, "custom", "jump");
+		v[13] = stat(json, "custom", "play_time") / 72000;
+		v[14] = stat(json, "custom", "deaths");
+		StringBuilder summary = new StringBuilder();
+		for (int k = 1; k <= 14; k++) {
+			run(server, "scoreboard players set " + name + " rb_imp" + k + " " + (int) Math.min(v[k], Integer.MAX_VALUE));
+			summary.append(k > 1 ? "," : "").append(v[k]);
+		}
+		run(server, "scoreboard players set " + name + " rb_impd 1");
+		appendLog("import.log", name + " IMPORT [" + summary + "]" + (json.isEmpty() ? " (fara fisier de statistici)" : ""));
 	}
 }

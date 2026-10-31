@@ -236,6 +236,7 @@ public class BVRCore implements ModInitializer {
 		registerBanCommands(d);
 		registerReportCommands(d);
 		registerSetAdmin(d);
+		registerRemoveAdmin(d);
 		registerTeleportCommands(d);
 	}
 
@@ -825,6 +826,12 @@ public class BVRCore implements ModInitializer {
 		});
 	}
 
+	private static void registerRemoveAdmin(CommandDispatcher<CommandSourceStack> d) {
+		reg(d, names("removeadmin", "RemoveAdmin", "deladmin"), n -> Commands.literal(n)
+			.then(Commands.argument("player", StringArgumentType.word())
+				.executes(c -> setAdmin(c, "none", 0, StringArgumentType.getString(c, "player")))));
+	}
+
 	private static int setAdmin(CommandContext<CommandSourceStack> context, String rankName, int code, String target) {
 		MinecraftServer server = context.getSource().getServer();
 		ServerPlayer caller = context.getSource().getPlayer();
@@ -843,14 +850,16 @@ public class BVRCore implements ModInitializer {
 			run(server, "scoreboard players set " + name + " rb_st 0");
 			run(server, "scoreboard players set " + name + " rb_staff 0");
 			run(server, "scoreboard players set " + name + " rb_smask 0");
+			run(server, "deop " + name);
 		} else {
 			// team_sync citeste rb_staff (1 Owner, 2 Admin, 3 Server Engineer, 4 Tester) si aprinde steagul gradului
 			run(server, "scoreboard players set " + name + " rb_staff " + code);
+			run(server, "op " + name);
 		}
 		String by = caller != null ? caller.getScoreboardName() : "Consola";
 		String text = code == 0
-			? by + " a scos toate gradele lui " + name + "."
-			: by + " i-a dat lui " + name + " gradul " + rankName + ".";
+			? by + " a scos toate gradele lui " + name + " (și OP-ul)."
+			: by + " i-a dat lui " + name + " gradul " + rankName + " (și OP).";
 		staffChat(server, line("[STAFF] ", "gold", text, "gray"));
 		if (caller != null) {
 			tell(server, caller, text + " (se aplică în câteva secunde)", "green");

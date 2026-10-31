@@ -3,17 +3,17 @@
 	"id": "bvr-core",
 	"version": "${version}",
 	"name": "BVR Core",
-	"description": "This is an example description! Tell everyone what your mod is about!",
+	"description": "Better Vanilla Romania: comenzi scurte si ceas real pentru datapack-ul Reborn (doar server).",
 	"authors": [
-		"Me!"
+		"Adytzu"
 	],
 	"contact": {
-		"homepage": "https://fabricmc.net/",
-		"sources": "https://github.com/FabricMC/fabric-example-mod"
+		"homepage": "https://github.com/AdytzuCriss/BVR-Core",
+		"sources": "https://github.com/AdytzuCriss/BVR-Core"
 	},
 	"license": "CC0-1.0",
 	"icon": "assets/bvr-core/icon.png",
-	"environment": "*",
+	"environment": "server",
 	"entrypoints": {
 		"main": [
 			"adytzu.bvrcore.BVRCore"

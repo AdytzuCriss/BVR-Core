@@ -248,6 +248,10 @@ public class BVRCore implements ModInitializer {
 		reg(d, names("bank"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger bankinfo")));
 		reg(d, names("missions"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger missions set 1")));
 		reg(d, names("pinned"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger missions set 8")));
+		reg(d, names("milestones"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger missions set 9")));
+		reg(d, names("info"), n -> Commands.literal(n)
+			.executes(c -> showInfo(c, null))
+			.then(Commands.argument("player", StringArgumentType.word()).executes(c -> showInfo(c, StringArgumentType.getString(c, "player")))));
 		reg(d, names("commands"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger shardshop set 50")));
 		reg(d, names("admincommands", "AdminCommands"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger shardshop set 57")));
 
@@ -905,6 +909,23 @@ public class BVRCore implements ModInitializer {
 		}
 		run(server, "execute unless entity " + target + " run tellraw " + who + " " + line("[TP] ", "red", "Jucătorul " + target + " nu este online.", "gray"));
 		appendLog("tp.log", me + (toTarget ? " GOTO " : " GETHERE ") + target);
+		return 1;
+	}
+
+	// ------------------------------------------------------------------ /info [jucator] - profil public (fara bani)
+
+	private static int showInfo(CommandContext<CommandSourceStack> context, String target) {
+		ServerPlayer p = context.getSource().getPlayer();
+		if (p == null) {
+			return 0;
+		}
+		MinecraftServer server = context.getSource().getServer();
+		String name = (target == null ? p.getScoreboardName() : target).replaceAll("[^A-Za-z0-9_]", "");
+		if (name.isEmpty()) {
+			return 0;
+		}
+		run(server, "data modify storage reborn:o q set value {n:\"" + name + "\"}");
+		run(server, "execute as " + p.getStringUUID() + " run function reborn:info_open with storage reborn:o q");
 		return 1;
 	}
 }

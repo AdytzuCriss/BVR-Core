@@ -235,6 +235,8 @@ public class BVRCore implements ModInitializer {
 		registerAdminCommands(d);
 		registerBanCommands(d);
 		registerReportCommands(d);
+		registerSetAdmin(d);
+		registerTeleportCommands(d);
 	}
 
 	private static void registerPlayerCommands(CommandDispatcher<CommandSourceStack> d) {
@@ -244,6 +246,7 @@ public class BVRCore implements ModInitializer {
 		reg(d, names("shardshop", "ShardShop"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger shardshop")));
 		reg(d, names("bank"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger bankinfo")));
 		reg(d, names("missions"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger missions set 1")));
+		reg(d, names("pinned"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger missions set 8")));
 		reg(d, names("commands"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger shardshop set 50")));
 		reg(d, names("admincommands", "AdminCommands"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger shardshop set 57")));
 
@@ -655,15 +658,15 @@ public class BVRCore implements ModInitializer {
 				PARTNER.put(staffName.toLowerCase(), r.name);
 				PARTNER.put(r.name.toLowerCase(), staffName);
 				saveReports();
-				run(server, "tellraw " + r.name + " " + line("[Ticket] ", "gold", "Adminul " + staffName + " ți-a acceptat ticketul. Scrie cu /r <mesaj>. / Admin " + staffName + " accepted your ticket. Chat with /r <message>.", "gray"));
-				tell(server, staff, "Ai acceptat ticketul lui " + r.name + ". Scrie cu /r <mesaj>, inchide cu /closereport.", "green");
+				run(server, "tellraw " + r.name + " " + line("[TICKET] ", "gold", "Adminul " + staffName + " a acceptat ticketul tău. Folosește /r <mesaj> ca să scrii pe chat cu adminul. / Admin " + staffName + " accepted your ticket. Use /r <message> to chat with the admin.", "yellow"));
+				run(server, "tellraw " + staff.getStringUUID() + " " + line("[TICKET] ", "gold", "Ai acceptat ticketul lui " + r.name + ". Folosește /r <mesaj> ca să scrii cu jucătorul. Pentru a închide ticketul folosește /closereport sau /cr.", "yellow"));
 				staffChat(server, line("[TICKET] ", "red", staffName + " a acceptat ticketul lui " + r.name + ".", "gray"));
 				appendLog("tickets.log", staffName + " ACCEPT " + r.name);
 				updateCounters(server);
 				return 1;
 			})));
 
-		reg(d, names("closereport", "CloseReport"), n -> Commands.literal(n).executes(c -> {
+		reg(d, names("closereport", "CloseReport", "cr", "CR"), n -> Commands.literal(n).executes(c -> {
 			ServerPlayer p = c.getSource().getPlayer();
 			if (p == null) {
 				return 0;
@@ -794,5 +797,105 @@ public class BVRCore implements ModInitializer {
 		} catch (IOException e) {
 			LOGGER.warn("Nu pot scrie {}: {}", REPORT_FILE, e.toString());
 		}
+	}
+
+	// ------------------------------------------------------------------ /setadmin <grad> <jucator>
+
+	private static boolean isOwner(MinecraftServer server, ServerPlayer player) {
+		Objective objective = server.getScoreboard().getObjective("rb_smask");
+		if (objective == null) {
+			return false;
+		}
+		ReadOnlyScoreInfo info = server.getScoreboard().getPlayerScoreInfo(player, objective);
+		return info != null && (info.value() & 1) == 1;
+	}
+
+	private static void registerSetAdmin(CommandDispatcher<CommandSourceStack> d) {
+		reg(d, names("setadmin", "SetAdmin"), n -> {
+			LiteralArgumentBuilder<CommandSourceStack> b = Commands.literal(n);
+			String[][] ranks = {
+				{"owner", "1"}, {"admin", "2"}, {"engineer", "3"}, {"serverengineer", "3"}, {"se", "3"},
+				{"tester", "4"}, {"none", "0"}
+			};
+			for (String[] rank : ranks) {
+				b.then(Commands.literal(rank[0]).then(Commands.argument("player", StringArgumentType.word())
+					.executes(c -> setAdmin(c, rank[0], Integer.parseInt(rank[1]), StringArgumentType.getString(c, "player")))));
+			}
+			return b;
+		});
+	}
+
+	private static int setAdmin(CommandContext<CommandSourceStack> context, String rankName, int code, String target) {
+		MinecraftServer server = context.getSource().getServer();
+		ServerPlayer caller = context.getSource().getPlayer();
+		if (caller != null && !isOwner(server, caller)) {
+			tell(server, caller, "Doar Owner-ul poate folosi /setadmin.", "red");
+			return 0;
+		}
+		String name = clean(target);
+		if (name.isEmpty() || name.contains(" ")) {
+			return 0;
+		}
+		if (code == 0) {
+			run(server, "scoreboard players set " + name + " rb_so 0");
+			run(server, "scoreboard players set " + name + " rb_sa 0");
+			run(server, "scoreboard players set " + name + " rb_sse 0");
+			run(server, "scoreboard players set " + name + " rb_st 0");
+			run(server, "scoreboard players set " + name + " rb_staff 0");
+			run(server, "scoreboard players set " + name + " rb_smask 0");
+		} else {
+			// team_sync citeste rb_staff (1 Owner, 2 Admin, 3 Server Engineer, 4 Tester) si aprinde steagul gradului
+			run(server, "scoreboard players set " + name + " rb_staff " + code);
+		}
+		String by = caller != null ? caller.getScoreboardName() : "Consola";
+		String text = code == 0
+			? by + " a scos toate gradele lui " + name + "."
+			: by + " i-a dat lui " + name + " gradul " + rankName + ".";
+		staffChat(server, line("[STAFF] ", "gold", text, "gray"));
+		if (caller != null) {
+			tell(server, caller, text + " (se aplică în câteva secunde)", "green");
+		}
+		appendLog("staff.log", text);
+		return 1;
+	}
+
+	// ------------------------------------------------------------------ /goto, /gethere (doar staff)
+
+	private static void registerTeleportCommands(CommandDispatcher<CommandSourceStack> d) {
+		reg(d, names("goto", "GoTo"), n -> Commands.literal(n)
+			.then(Commands.argument("player", StringArgumentType.word())
+				.executes(c -> teleportStaff(c, StringArgumentType.getString(c, "player"), true))));
+		reg(d, names("gethere", "GetHere"), n -> Commands.literal(n)
+			.then(Commands.argument("player", StringArgumentType.word())
+				.executes(c -> teleportStaff(c, StringArgumentType.getString(c, "player"), false))));
+	}
+
+	/** toTarget = true: staff-ul merge la jucator (/goto); false: jucatorul vine la staff (/gethere). */
+	private static int teleportStaff(CommandContext<CommandSourceStack> context, String targetName, boolean toTarget) {
+		ServerPlayer staff = staffOnly(context);
+		if (staff == null) {
+			return 0;
+		}
+		MinecraftServer server = context.getSource().getServer();
+		String target = clean(targetName);
+		String me = staff.getScoreboardName();
+		if (target.isEmpty() || target.contains(" ")) {
+			return 0;
+		}
+		if (target.equalsIgnoreCase(me)) {
+			tell(server, staff, "Nu poți folosi comanda pe tine însuți.", "red");
+			return 0;
+		}
+		String who = staff.getStringUUID();
+		if (toTarget) {
+			run(server, "execute if entity " + target + " run tp " + me + " " + target);
+			run(server, "execute if entity " + target + " run tellraw " + who + " " + line("[TP] ", "aqua", "Te-ai teleportat la " + target + ".", "gray"));
+		} else {
+			run(server, "execute if entity " + target + " run tp " + target + " " + me);
+			run(server, "execute if entity " + target + " run tellraw " + who + " " + line("[TP] ", "aqua", target + " a fost adus la tine.", "gray"));
+		}
+		run(server, "execute unless entity " + target + " run tellraw " + who + " " + line("[TP] ", "red", "Jucătorul " + target + " nu este online.", "gray"));
+		appendLog("tp.log", me + (toTarget ? " GOTO " : " GETHERE ") + target);
+		return 1;
 	}
 }

@@ -41,7 +41,7 @@ import java.util.regex.Pattern;
  * BVR Core (doar server):
  *  - ceas real in scoreboard-ul rb_const (#now_s, #now_m, #today, #mod, #clock);
  *  - comenzi scurte pentru /trigger-urile datapack-ului reborn;
- *  - comenzi de admin (doar staff = scor rb_staff >= 1) care ruleaza functiile datapack-ului;
+ *  - comenzi de admin (doar staff = scor rb_smask >= 1) care ruleaza functiile datapack-ului;
  *  - /admineconomy cu jurnal in fisier text, /tempban si /unban cu expirare automata.
  *
  * Toate comenzile se executa prin sursa serverului (comenzi vanilla), deci nu depind de API-uri interne.
@@ -177,9 +177,12 @@ public class BVRCore implements ModInitializer {
 		}
 	}
 
-	/** Staff = scor rb_staff >= 1 (Owner, Admin, Server Engineer, Tester). */
+	/**
+	 * Staff = scor rb_smask >= 1 (Owner, Admin, Server Engineer, Tester). rb_smask e masca persistenta pe care o
+	 * calculeaza datapack-ul; rb_staff e doar comanda one-shot care se reseteaza la 0 dupa fiecare sincronizare.
+	 */
 	private static boolean isStaff(MinecraftServer server, ServerPlayer player) {
-		Objective objective = server.getScoreboard().getObjective("rb_staff");
+		Objective objective = server.getScoreboard().getObjective("rb_smask");
 		if (objective == null) {
 			return false;
 		}
@@ -240,7 +243,7 @@ public class BVRCore implements ModInitializer {
 		reg(d, names("myreborn", "MyReborn"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger reborn_info")));
 		reg(d, names("shardshop", "ShardShop"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger shardshop")));
 		reg(d, names("bank"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger bankinfo")));
-		reg(d, names("missions"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger shardshop set 20")));
+		reg(d, names("missions"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger missions set 1")));
 		reg(d, names("commands"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger shardshop set 50")));
 		reg(d, names("admincommands", "AdminCommands"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger shardshop set 57")));
 
@@ -590,9 +593,9 @@ public class BVRCore implements ModInitializer {
 		return "[{\"text\":\"" + esc(prefix) + "\",\"color\":\"" + prefixColor + "\",\"bold\":true},{\"text\":\"" + esc(text) + "\",\"color\":\"" + color + "\"}]";
 	}
 
-	/** Mesaj in chat pentru tot staff-ul online (scor rb_staff >= 1). */
+	/** Mesaj in chat pentru tot staff-ul online (scor rb_smask >= 1). */
 	private static void staffChat(MinecraftServer server, String json) {
-		run(server, "tellraw @a[scores={rb_staff=1..}] " + json);
+		run(server, "tellraw @a[scores={rb_smask=1..}] " + json);
 	}
 
 	// ------------------------------------------------------------------ ticket-uri (/report, /acceptreport, /closereport, /r)

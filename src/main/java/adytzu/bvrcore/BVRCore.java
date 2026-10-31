@@ -77,6 +77,7 @@ public class BVRCore implements ModInitializer {
 	@Override
 	public void onInitialize() {
 		loadBans();
+		loadReports();
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> registerCommands(dispatcher));
 		ServerTickEvents.END_SERVER_TICK.register(this::onServerTick);
 		LOGGER.info("BVR Core incarcat: comenzi scurte, admin, ceas real ({}).", ZONE);
@@ -110,6 +111,7 @@ public class BVRCore implements ModInitializer {
 		setScore(server, source, "#today", (int) today.toEpochDay());
 		setScore(server, source, "#mod", now.getHour() * 60 + now.getMinute());
 		setScore(server, source, "#clock", 1);
+		updateCounters(server);
 	}
 
 	private static void setScore(MinecraftServer server, CommandSourceStack source, String holder, int value) {
@@ -158,7 +160,7 @@ public class BVRCore implements ModInitializer {
 	}
 
 	private static String clean(String text) {
-		return text.replaceAll("[^A-Za-z0-9_ .,:;!?()\\-]", "").trim();
+		return text.replaceAll("[^\\p{L}\\p{N}_ .,:;!?()\\-]", "").trim();
 	}
 
 	private static void tell(MinecraftServer server, ServerPlayer player, String text, String color) {
@@ -229,6 +231,7 @@ public class BVRCore implements ModInitializer {
 		registerPlayerCommands(d);
 		registerAdminCommands(d);
 		registerBanCommands(d);
+		registerReportCommands(d);
 	}
 
 	private static void registerPlayerCommands(CommandDispatcher<CommandSourceStack> d) {
@@ -237,9 +240,9 @@ public class BVRCore implements ModInitializer {
 		reg(d, names("myreborn", "MyReborn"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger reborn_info")));
 		reg(d, names("shardshop", "ShardShop"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger shardshop")));
 		reg(d, names("bank"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger bankinfo")));
-		reg(d, names("missions"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger missions")));
-		reg(d, names("commands"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger commands")));
-		reg(d, names("admincommands", "AdminCommands"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger admincommands")));
+		reg(d, names("missions"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger shardshop set 20")));
+		reg(d, names("commands"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger shardshop set 50")));
+		reg(d, names("admincommands", "AdminCommands"), n -> Commands.literal(n).executes(c -> asPlayer(c, "trigger shardshop set 57")));
 
 		reg(d, names("hud"), n -> {
 			LiteralArgumentBuilder<CommandSourceStack> b = Commands.literal(n).executes(c -> asPlayer(c, "trigger hud"));
@@ -305,6 +308,7 @@ public class BVRCore implements ModInitializer {
 				.then(Commands.literal("on").executes(c -> admin(c, "function reborn:test_on")))
 				.then(Commands.literal("off").executes(c -> admin(c, "function reborn:test_off"))));
 			b.then(Commands.literal("debug").executes(c -> admin(c, "function reborn:admin_debug")));
+			b.then(Commands.literal("diag").executes(c -> admin(c, "function reborn:diag")));
 			b.then(Commands.literal("simwither").executes(c -> admin(c, "function reborn:admin_sim_wither")));
 			b.then(Commands.literal("simwarden").executes(c -> admin(c, "function reborn:admin_sim_warden")));
 			return b;
@@ -476,6 +480,7 @@ public class BVRCore implements ModInitializer {
 						run(server, "ban " + target + " " + reason);
 						appendLog("bans.log", staff.getScoreboardName() + " TEMPBAN " + target + " durata=" + expiryText + " motiv=" + reason);
 						tell(server, staff, "Ban aplicat: " + target + " (" + expiryText + ").", "green");
+						staffChat(server, line("[BAN] ", "red", staff.getScoreboardName() + " a banat " + target + " (" + expiryText + "): " + reason, "gray"));
 						return 1;
 					})))));
 
@@ -498,6 +503,7 @@ public class BVRCore implements ModInitializer {
 					run(server, "pardon " + target);
 					appendLog("bans.log", staff.getScoreboardName() + " UNBAN " + target + " motiv=" + reason);
 					tell(server, staff, "Ban scos: " + target + ".", "green");
+					staffChat(server, line("[UNBAN] ", "green", staff.getScoreboardName() + " a scos banul lui " + target + ": " + reason, "gray"));
 					return 1;
 				}))));
 	}
@@ -538,6 +544,7 @@ public class BVRCore implements ModInitializer {
 			String[] entry = TEMPBANS.remove(key);
 			run(server, "pardon " + entry[0]);
 			appendLog("bans.log", "AUTO-UNBAN " + entry[0] + " (expirat; banat de " + entry[2] + ", motiv=" + entry[3] + ")");
+			staffChat(server, line("[UNBAN] ", "green", "Banul lui " + entry[0] + " a expirat.", "gray"));
 		}
 		if (!expired.isEmpty()) {
 			saveBans();
@@ -570,6 +577,219 @@ public class BVRCore implements ModInitializer {
 			Files.write(BAN_FILE, lines, StandardCharsets.UTF_8);
 		} catch (IOException e) {
 			LOGGER.warn("Nu pot scrie {}: {}", BAN_FILE, e.toString());
+		}
+	}
+
+	// ------------------------------------------------------------------ chat staff
+
+	private static String esc(String text) {
+		return text.replace("\\", "\\\\").replace("\"", "\\\"");
+	}
+
+	private static String line(String prefix, String prefixColor, String text, String color) {
+		return "[{\"text\":\"" + esc(prefix) + "\",\"color\":\"" + prefixColor + "\",\"bold\":true},{\"text\":\"" + esc(text) + "\",\"color\":\"" + color + "\"}]";
+	}
+
+	/** Mesaj in chat pentru tot staff-ul online (scor rb_staff >= 1). */
+	private static void staffChat(MinecraftServer server, String json) {
+		run(server, "tellraw @a[scores={rb_staff=1..}] " + json);
+	}
+
+	// ------------------------------------------------------------------ ticket-uri (/report, /acceptreport, /closereport, /r)
+
+	private static final class Report {
+		String name;
+		String type;
+		String text;
+		String time;
+		String staff = "";
+	}
+
+	/** nume jucator (litere mici) -> ticket */
+	private static final Map<String, Report> REPORTS = new LinkedHashMap<>();
+	/** nume (litere mici) -> numele partenerului din conversatia privata */
+	private static final Map<String, String> PARTNER = new LinkedHashMap<>();
+	private static final Path REPORT_FILE = Path.of("config", "bvr-core-reports.txt");
+
+	private static void updateCounters(MinecraftServer server) {
+		int pending = 0;
+		for (Report r : REPORTS.values()) {
+			if (r.staff.isEmpty()) {
+				pending++;
+			}
+		}
+		CommandSourceStack source = serverSource(server);
+		setScore(server, source, "#rep_open", pending);
+		setScore(server, source, "#flag_open", 0);
+	}
+
+	private static void registerReportCommands(CommandDispatcher<CommandSourceStack> d) {
+		reg(d, names("report"), n -> {
+			LiteralArgumentBuilder<CommandSourceStack> b = Commands.literal(n);
+			for (String type : new String[] {"cheating", "stuck", "other"}) {
+				b.then(Commands.literal(type).executes(c -> openReport(c, type, ""))
+					.then(Commands.argument("message", StringArgumentType.greedyString())
+						.executes(c -> openReport(c, type, StringArgumentType.getString(c, "message")))));
+			}
+			return b;
+		});
+
+		reg(d, names("acceptreport", "AcceptReport", "ar", "AR"), n -> Commands.literal(n)
+			.then(Commands.argument("player", StringArgumentType.word()).executes(c -> {
+				ServerPlayer staff = staffOnly(c);
+				if (staff == null) {
+					return 0;
+				}
+				MinecraftServer server = c.getSource().getServer();
+				String target = StringArgumentType.getString(c, "player");
+				Report r = REPORTS.get(target.toLowerCase());
+				if (r == null) {
+					tell(server, staff, "Nu exista un ticket deschis de acest jucator.", "red");
+					return 0;
+				}
+				String staffName = staff.getScoreboardName();
+				r.staff = staffName;
+				PARTNER.put(staffName.toLowerCase(), r.name);
+				PARTNER.put(r.name.toLowerCase(), staffName);
+				saveReports();
+				run(server, "tellraw " + r.name + " " + line("[Ticket] ", "gold", "Adminul " + staffName + " ți-a acceptat ticketul. Scrie cu /r <mesaj>. / Admin " + staffName + " accepted your ticket. Chat with /r <message>.", "gray"));
+				tell(server, staff, "Ai acceptat ticketul lui " + r.name + ". Scrie cu /r <mesaj>, inchide cu /closereport.", "green");
+				staffChat(server, line("[TICKET] ", "red", staffName + " a acceptat ticketul lui " + r.name + ".", "gray"));
+				appendLog("tickets.log", staffName + " ACCEPT " + r.name);
+				updateCounters(server);
+				return 1;
+			})));
+
+		reg(d, names("closereport", "CloseReport"), n -> Commands.literal(n).executes(c -> {
+			ServerPlayer p = c.getSource().getPlayer();
+			if (p == null) {
+				return 0;
+			}
+			MinecraftServer server = c.getSource().getServer();
+			String me = p.getScoreboardName();
+			String partner = PARTNER.remove(me.toLowerCase());
+			if (partner != null) {
+				PARTNER.remove(partner.toLowerCase());
+			}
+			Report r = REPORTS.remove(me.toLowerCase());
+			if (r == null && partner != null) {
+				r = REPORTS.remove(partner.toLowerCase());
+			}
+			if (r == null && partner == null) {
+				tell(server, p, "Nu ai niciun ticket. / You have no ticket.", "red");
+				return 0;
+			}
+			saveReports();
+			String who = r != null ? r.name : me;
+			if (partner != null) {
+				run(server, "tellraw " + partner + " " + line("[Ticket] ", "gold", "Ticketul a fost închis. / The ticket was closed.", "gray"));
+			}
+			tell(server, p, "Ticket inchis. / Ticket closed.", "green");
+			staffChat(server, line("[TICKET] ", "red", me + " a inchis ticketul lui " + who + ".", "gray"));
+			appendLog("tickets.log", me + " CLOSE " + who);
+			updateCounters(server);
+			return 1;
+		}));
+
+		reg(d, names("reports", "Reports"), n -> Commands.literal(n).executes(c -> {
+			ServerPlayer staff = staffOnly(c);
+			if (staff == null) {
+				return 0;
+			}
+			MinecraftServer server = c.getSource().getServer();
+			if (REPORTS.isEmpty()) {
+				tell(server, staff, "Nu exista tickete deschise.", "gray");
+				return 1;
+			}
+			for (Report r : REPORTS.values()) {
+				String state = r.staff.isEmpty() ? "nepreluat" : "preluat de " + r.staff;
+				run(server, "tellraw " + staff.getStringUUID() + " " + line("[TICKET] ", "red", r.name + " (" + r.type + ", " + state + ", " + r.time + ")" + (r.text.isEmpty() ? "" : ": " + r.text), "gray"));
+			}
+			return 1;
+		}));
+
+		// /r <mesaj>: chat privat intre staff si jucator dupa /acceptreport
+		reg(d, names("r"), n -> Commands.literal(n)
+			.then(Commands.argument("message", StringArgumentType.greedyString()).executes(c -> {
+				ServerPlayer p = c.getSource().getPlayer();
+				if (p == null) {
+					return 0;
+				}
+				MinecraftServer server = c.getSource().getServer();
+				String me = p.getScoreboardName();
+				String partner = PARTNER.get(me.toLowerCase());
+				if (partner == null) {
+					tell(server, p, "Nu ai un ticket activ. / You have no active ticket.", "red");
+					return 0;
+				}
+				String message = clean(StringArgumentType.getString(c, "message"));
+				if (message.isEmpty()) {
+					return 0;
+				}
+				String json = "[{\"text\":\"[Ticket] \",\"color\":\"gold\"},{\"text\":\"" + esc(me) + ": \",\"color\":\"white\"},{\"text\":\"" + esc(message) + "\",\"color\":\"yellow\"}]";
+				run(server, "tellraw " + p.getStringUUID() + " " + json);
+				run(server, "tellraw " + partner + " " + json);
+				appendLog("tickets.log", me + " -> " + partner + ": " + message);
+				return 1;
+			})));
+	}
+
+	private static int openReport(CommandContext<CommandSourceStack> context, String type, String message) {
+		ServerPlayer p = context.getSource().getPlayer();
+		if (p == null) {
+			return 0;
+		}
+		MinecraftServer server = context.getSource().getServer();
+		String text = clean(message);
+		if (text.length() > 120) {
+			text = text.substring(0, 120);
+		}
+		Report r = new Report();
+		r.name = p.getScoreboardName();
+		r.type = type;
+		r.text = text;
+		r.time = stamp();
+		REPORTS.put(r.name.toLowerCase(), r);
+		saveReports();
+		tell(server, p, "Ticket trimis (" + type + "). Un admin te va contacta. / Ticket sent. An admin will contact you.", "green");
+		staffChat(server, line("[TICKET] ", "red", r.name + " a deschis un ticket (" + type + ")" + (text.isEmpty() ? "" : ": " + text) + ". Acceptă cu /ar " + r.name, "gray"));
+		appendLog("tickets.log", r.name + " OPEN type=" + type + " text=" + text);
+		updateCounters(server);
+		return 1;
+	}
+
+	private static void loadReports() {
+		REPORTS.clear();
+		try {
+			if (Files.exists(REPORT_FILE)) {
+				for (String lineText : Files.readAllLines(REPORT_FILE, StandardCharsets.UTF_8)) {
+					String[] p = lineText.split("\t", 5);
+					if (p.length == 5) {
+						Report r = new Report();
+						r.name = p[0];
+						r.type = p[1];
+						r.time = p[2];
+						r.staff = p[3];
+						r.text = p[4];
+						REPORTS.put(r.name.toLowerCase(), r);
+					}
+				}
+			}
+		} catch (IOException e) {
+			LOGGER.warn("Nu pot citi {}: {}", REPORT_FILE, e.toString());
+		}
+	}
+
+	private static void saveReports() {
+		try {
+			Files.createDirectories(REPORT_FILE.getParent());
+			List<String> lines = new ArrayList<>();
+			for (Report r : REPORTS.values()) {
+				lines.add(r.name + "\t" + r.type + "\t" + r.time + "\t" + r.staff + "\t" + r.text);
+			}
+			Files.write(REPORT_FILE, lines, StandardCharsets.UTF_8);
+		} catch (IOException e) {
+			LOGGER.warn("Nu pot scrie {}: {}", REPORT_FILE, e.toString());
 		}
 	}
 }
